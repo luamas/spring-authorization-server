@@ -18,10 +18,14 @@ package org.springframework.security.oauth2.server.authorization;
 import org.junit.Before;
 import org.junit.Test;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
+import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.TestRegisteredClients;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2AuthorizationCode;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2Tokens;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -30,11 +34,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * Tests for {@link InMemoryOAuth2AuthorizationService}.
  *
  * @author Krisztian Toth
+ * @author Joe Grandja
  */
 public class InMemoryOAuth2AuthorizationServiceTests {
 	private static final RegisteredClient REGISTERED_CLIENT = TestRegisteredClients.registeredClient().build();
 	private static final String PRINCIPAL_NAME = "principal";
-	private static final String AUTHORIZATION_CODE = "code";
+	private static final OAuth2AuthorizationCode AUTHORIZATION_CODE = new OAuth2AuthorizationCode(
+			"code", Instant.now(), Instant.now().plus(5, ChronoUnit.MINUTES));
 	private InMemoryOAuth2AuthorizationService authorizationService;
 
 	@Before
@@ -53,43 +59,81 @@ public class InMemoryOAuth2AuthorizationServiceTests {
 	public void saveWhenAuthorizationProvidedThenSaved() {
 		OAuth2Authorization expectedAuthorization = OAuth2Authorization.withRegisteredClient(REGISTERED_CLIENT)
 				.principalName(PRINCIPAL_NAME)
-				.attribute(OAuth2AuthorizationAttributeNames.CODE, AUTHORIZATION_CODE)
+				.tokens(OAuth2Tokens.builder().token(AUTHORIZATION_CODE).build())
 				.build();
 		this.authorizationService.save(expectedAuthorization);
 
 		OAuth2Authorization authorization = this.authorizationService.findByToken(
-				AUTHORIZATION_CODE, TokenType.AUTHORIZATION_CODE);
+				AUTHORIZATION_CODE.getTokenValue(), TokenType.AUTHORIZATION_CODE);
 		assertThat(authorization).isEqualTo(expectedAuthorization);
 	}
 
 	@Test
-	public void findByTokenAndTokenTypeWhenTokenNullThenThrowIllegalArgumentException() {
+	public void removeWhenAuthorizationNullThenThrowIllegalArgumentException() {
+		assertThatThrownBy(() -> this.authorizationService.remove(null))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessage("authorization cannot be null");
+	}
+
+	@Test
+	public void removeWhenAuthorizationProvidedThenRemoved() {
+		OAuth2Authorization expectedAuthorization = OAuth2Authorization.withRegisteredClient(REGISTERED_CLIENT)
+				.principalName(PRINCIPAL_NAME)
+				.tokens(OAuth2Tokens.builder().token(AUTHORIZATION_CODE).build())
+				.build();
+
+		this.authorizationService.save(expectedAuthorization);
+		OAuth2Authorization authorization = this.authorizationService.findByToken(
+				AUTHORIZATION_CODE.getTokenValue(), TokenType.AUTHORIZATION_CODE);
+		assertThat(authorization).isEqualTo(expectedAuthorization);
+
+		this.authorizationService.remove(expectedAuthorization);
+		authorization = this.authorizationService.findByToken(
+				AUTHORIZATION_CODE.getTokenValue(), TokenType.AUTHORIZATION_CODE);
+		assertThat(authorization).isNull();
+	}
+
+	@Test
+	public void findByTokenWhenTokenNullThenThrowIllegalArgumentException() {
 		assertThatThrownBy(() -> this.authorizationService.findByToken(null, TokenType.AUTHORIZATION_CODE))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessage("token cannot be empty");
 	}
 
 	@Test
-	public void findByTokenAndTokenTypeWhenTokenTypeAuthorizationCodeThenFound() {
+	public void findByTokenWhenTokenTypeStateThenFound() {
+		String state = "state";
 		OAuth2Authorization authorization = OAuth2Authorization.withRegisteredClient(REGISTERED_CLIENT)
 				.principalName(PRINCIPAL_NAME)
-				.attribute(OAuth2AuthorizationAttributeNames.CODE, AUTHORIZATION_CODE)
+				.attribute(OAuth2AuthorizationAttributeNames.STATE, state)
 				.build();
 		this.authorizationService.save(authorization);
 
 		OAuth2Authorization result = this.authorizationService.findByToken(
-				AUTHORIZATION_CODE, TokenType.AUTHORIZATION_CODE);
+				state, new TokenType(OAuth2AuthorizationAttributeNames.STATE));
 		assertThat(authorization).isEqualTo(result);
 	}
 
 	@Test
-	public void findByTokenAndTokenTypeWhenTokenTypeAccessTokenThenFound() {
+	public void findByTokenWhenTokenTypeAuthorizationCodeThenFound() {
+		OAuth2Authorization authorization = OAuth2Authorization.withRegisteredClient(REGISTERED_CLIENT)
+				.principalName(PRINCIPAL_NAME)
+				.tokens(OAuth2Tokens.builder().token(AUTHORIZATION_CODE).build())
+				.build();
+		this.authorizationService.save(authorization);
+
+		OAuth2Authorization result = this.authorizationService.findByToken(
+				AUTHORIZATION_CODE.getTokenValue(), TokenType.AUTHORIZATION_CODE);
+		assertThat(authorization).isEqualTo(result);
+	}
+
+	@Test
+	public void findByTokenWhenTokenTypeAccessTokenThenFound() {
 		OAuth2AccessToken accessToken = new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER,
 				"access-token", Instant.now().minusSeconds(60), Instant.now());
 		OAuth2Authorization authorization = OAuth2Authorization.withRegisteredClient(REGISTERED_CLIENT)
 				.principalName(PRINCIPAL_NAME)
-				.attribute(OAuth2AuthorizationAttributeNames.CODE, AUTHORIZATION_CODE)
-				.accessToken(accessToken)
+				.tokens(OAuth2Tokens.builder().token(AUTHORIZATION_CODE).accessToken(accessToken).build())
 				.build();
 		this.authorizationService.save(authorization);
 
@@ -99,7 +143,21 @@ public class InMemoryOAuth2AuthorizationServiceTests {
 	}
 
 	@Test
-	public void findByTokenAndTokenTypeWhenTokenDoesNotExistThenNull() {
+	public void findByTokenWhenTokenTypeRefreshTokenThenFound() {
+		OAuth2RefreshToken refreshToken = new OAuth2RefreshToken("refresh-token", Instant.now());
+		OAuth2Authorization authorization = OAuth2Authorization.withRegisteredClient(REGISTERED_CLIENT)
+				.principalName(PRINCIPAL_NAME)
+				.tokens(OAuth2Tokens.builder().refreshToken(refreshToken).build())
+				.build();
+		this.authorizationService.save(authorization);
+
+		OAuth2Authorization result = this.authorizationService.findByToken(
+				refreshToken.getTokenValue(), TokenType.REFRESH_TOKEN);
+		assertThat(authorization).isEqualTo(result);
+	}
+
+	@Test
+	public void findByTokenWhenTokenDoesNotExistThenNull() {
 		OAuth2Authorization result = this.authorizationService.findByToken(
 				"access-token", TokenType.ACCESS_TOKEN);
 		assertThat(result).isNull();

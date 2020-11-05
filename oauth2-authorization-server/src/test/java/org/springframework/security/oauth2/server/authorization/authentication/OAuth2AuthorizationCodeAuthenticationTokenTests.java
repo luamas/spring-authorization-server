@@ -16,8 +16,10 @@
 package org.springframework.security.oauth2.server.authorization.authentication;
 
 import org.junit.Test;
-import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.server.authorization.client.TestRegisteredClients;
+
+import java.util.Collections;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -26,52 +28,49 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * Tests for {@link OAuth2AuthorizationCodeAuthenticationToken}.
  *
  * @author Joe Grandja
+ * @author Daniel Garnier-Moiroux
  */
 public class OAuth2AuthorizationCodeAuthenticationTokenTests {
 	private String code = "code";
-	private OAuth2ClientAuthenticationToken clientPrincipal =
-			new OAuth2ClientAuthenticationToken(TestRegisteredClients.registeredClient().build());
-	private String clientId = "clientId";
+	private OAuth2ClientAuthenticationToken clientPrincipal = new OAuth2ClientAuthenticationToken(
+			TestRegisteredClients.registeredClient().build());
 	private String redirectUri = "redirectUri";
+	private Map<String, Object> additionalParameters = Collections.singletonMap("param1", "value1");
 
 	@Test
 	public void constructorWhenCodeNullThenThrowIllegalArgumentException() {
-		assertThatThrownBy(() -> new OAuth2AuthorizationCodeAuthenticationToken(null, this.clientPrincipal, this.redirectUri))
+		assertThatThrownBy(() -> new OAuth2AuthorizationCodeAuthenticationToken(null, this.clientPrincipal, this.redirectUri, null))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessage("code cannot be empty");
 	}
 
 	@Test
 	public void constructorWhenClientPrincipalNullThenThrowIllegalArgumentException() {
-		assertThatThrownBy(() -> new OAuth2AuthorizationCodeAuthenticationToken(this.code, (Authentication) null, this.redirectUri))
+		assertThatThrownBy(() -> new OAuth2AuthorizationCodeAuthenticationToken(this.code, null, this.redirectUri, null))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessage("clientPrincipal cannot be null");
 	}
 
 	@Test
-	public void constructorWhenClientIdNullThenThrowIllegalArgumentException() {
-		assertThatThrownBy(() -> new OAuth2AuthorizationCodeAuthenticationToken(this.code, (String) null, this.redirectUri))
-				.isInstanceOf(IllegalArgumentException.class)
-				.hasMessage("clientId cannot be empty");
-	}
-
-	@Test
 	public void constructorWhenClientPrincipalProvidedThenCreated() {
 		OAuth2AuthorizationCodeAuthenticationToken authentication = new OAuth2AuthorizationCodeAuthenticationToken(
-				this.code, this.clientPrincipal, this.redirectUri);
+				this.code, this.clientPrincipal, this.redirectUri, this.additionalParameters);
 		assertThat(authentication.getPrincipal()).isEqualTo(this.clientPrincipal);
 		assertThat(authentication.getCredentials().toString()).isEmpty();
 		assertThat(authentication.getCode()).isEqualTo(this.code);
 		assertThat(authentication.getRedirectUri()).isEqualTo(this.redirectUri);
+		assertThat(authentication.getAdditionalParameters()).isEqualTo(this.additionalParameters);
 	}
 
 	@Test
-	public void constructorWhenClientIdProvidedThenCreated() {
+	public void getAdditionalParametersWhenUpdateThenThrowUnsupportedOperationException() {
 		OAuth2AuthorizationCodeAuthenticationToken authentication = new OAuth2AuthorizationCodeAuthenticationToken(
-				this.code, this.clientId, this.redirectUri);
-		assertThat(authentication.getPrincipal()).isEqualTo(this.clientId);
-		assertThat(authentication.getCredentials().toString()).isEmpty();
-		assertThat(authentication.getCode()).isEqualTo(this.code);
-		assertThat(authentication.getRedirectUri()).isEqualTo(this.redirectUri);
+				this.code, this.clientPrincipal, this.redirectUri, this.additionalParameters);
+		assertThatThrownBy(() -> authentication.getAdditionalParameters().put("another_key", 1))
+				.isInstanceOf(UnsupportedOperationException.class);
+		assertThatThrownBy(() -> authentication.getAdditionalParameters().remove("some_key"))
+				.isInstanceOf(UnsupportedOperationException.class);
+		assertThatThrownBy(() -> authentication.getAdditionalParameters().clear())
+				.isInstanceOf(UnsupportedOperationException.class);
 	}
 }

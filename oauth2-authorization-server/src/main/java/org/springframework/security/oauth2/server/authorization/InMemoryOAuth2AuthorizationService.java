@@ -16,7 +16,7 @@
 package org.springframework.security.oauth2.server.authorization;
 
 import org.springframework.lang.Nullable;
-import org.springframework.security.core.SpringSecurityCoreVersion2;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2AuthorizationCode;
 import org.springframework.util.Assert;
 
 import java.io.Serializable;
@@ -26,6 +26,9 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * An {@link OAuth2AuthorizationService} that stores {@link OAuth2Authorization}'s in-memory.
+ *
+ * <p>
+ * <b>NOTE:</b> This implementation should ONLY be used during development/testing.
  *
  * @author Krisztian Toth
  * @author Joe Grandja
@@ -44,6 +47,14 @@ public final class InMemoryOAuth2AuthorizationService implements OAuth2Authoriza
 	}
 
 	@Override
+	public void remove(OAuth2Authorization authorization) {
+		Assert.notNull(authorization, "authorization cannot be null");
+		OAuth2AuthorizationId authorizationId = new OAuth2AuthorizationId(
+				authorization.getRegisteredClientId(), authorization.getPrincipalName());
+		this.authorizations.remove(authorizationId, authorization);
+	}
+
+	@Override
 	public OAuth2Authorization findByToken(String token, @Nullable TokenType tokenType) {
 		Assert.hasText(token, "token cannot be empty");
 		return this.authorizations.values().stream()
@@ -53,17 +64,24 @@ public final class InMemoryOAuth2AuthorizationService implements OAuth2Authoriza
 	}
 
 	private boolean hasToken(OAuth2Authorization authorization, String token, TokenType tokenType) {
-		if (TokenType.AUTHORIZATION_CODE.equals(tokenType)) {
-			return token.equals(authorization.getAttribute(OAuth2AuthorizationAttributeNames.CODE));
+		if (OAuth2AuthorizationAttributeNames.STATE.equals(tokenType.getValue())) {
+			return token.equals(authorization.getAttribute(OAuth2AuthorizationAttributeNames.STATE));
+		} else if (TokenType.AUTHORIZATION_CODE.equals(tokenType)) {
+			OAuth2AuthorizationCode authorizationCode = authorization.getTokens().getToken(OAuth2AuthorizationCode.class);
+			return authorizationCode != null && authorizationCode.getTokenValue().equals(token);
 		} else if (TokenType.ACCESS_TOKEN.equals(tokenType)) {
-			return authorization.getAccessToken() != null &&
-					authorization.getAccessToken().getTokenValue().equals(token);
+			return authorization.getTokens().getAccessToken() != null &&
+					authorization.getTokens().getAccessToken().getTokenValue().equals(token);
+		} else if (TokenType.REFRESH_TOKEN.equals(tokenType)) {
+			return authorization.getTokens().getRefreshToken() != null &&
+					authorization.getTokens().getRefreshToken().getTokenValue().equals(token);
 		}
+
 		return false;
 	}
 
 	private static class OAuth2AuthorizationId implements Serializable {
-		private static final long serialVersionUID = SpringSecurityCoreVersion2.SERIAL_VERSION_UID;
+		private static final long serialVersionUID = Version.SERIAL_VERSION_UID;
 		private final String registeredClientId;
 		private final String principalName;
 

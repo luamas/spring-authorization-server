@@ -22,32 +22,31 @@ import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
+import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
-import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
-import org.springframework.security.oauth2.jose.JoseHeader;
-import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationAttributeNames;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.TokenType;
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2AuthorizationCode;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenMetadata;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2Tokens;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
-import java.net.MalformedURLException;
-import java.net.URI;
-import java.net.URL;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.Collections;
+import java.util.Set;
+
+import static org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthenticationProviderUtils.getAuthenticatedClientElseThrowInvalidClient;
 
 /**
  * An {@link AuthenticationProvider} implementation for the OAuth 2.0 Authorization Code Grant.
  *
  * @author Joe Grandja
+ * @author Daniel Garnier-Moiroux
  * @since 0.0.1
  * @see OAuth2AuthorizationCodeAuthenticationToken
  * @see OAuth2AccessTokenAuthenticationToken
@@ -84,72 +83,66 @@ public class OAuth2AuthorizationCodeAuthenticationProvider implements Authentica
 		OAuth2AuthorizationCodeAuthenticationToken authorizationCodeAuthentication =
 				(OAuth2AuthorizationCodeAuthenticationToken) authentication;
 
-		OAuth2ClientAuthenticationToken clientPrincipal = null;
-		if (OAuth2ClientAuthenticationToken.class.isAssignableFrom(authorizationCodeAuthentication.getPrincipal().getClass())) {
-			clientPrincipal = (OAuth2ClientAuthenticationToken) authorizationCodeAuthentication.getPrincipal();
-		}
-		if (clientPrincipal == null || !clientPrincipal.isAuthenticated()) {
-			throw new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.INVALID_CLIENT));
-		}
-
-		// TODO Authenticate public client
-		// A client MAY use the "client_id" request parameter to identify itself
-		// when sending requests to the token endpoint.
-		// In the "authorization_code" "grant_type" request to the token endpoint,
-		// an unauthenticated client MUST send its "client_id" to prevent itself
-		// from inadvertently accepting a code intended for a client with a different "client_id".
-		// This protects the client from substitution of the authentication code.
+		OAuth2ClientAuthenticationToken clientPrincipal =
+				getAuthenticatedClientElseThrowInvalidClient(authorizationCodeAuthentication);
+		RegisteredClient registeredClient = clientPrincipal.getRegisteredClient();
 
 		OAuth2Authorization authorization = this.authorizationService.findByToken(
 				authorizationCodeAuthentication.getCode(), TokenType.AUTHORIZATION_CODE);
 		if (authorization == null) {
 			throw new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.INVALID_GRANT));
 		}
-		if (!clientPrincipal.getRegisteredClient().getId().equals(authorization.getRegisteredClientId())) {
-			throw new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.INVALID_GRANT));
-		}
+		OAuth2AuthorizationCode authorizationCode = authorization.getTokens().getToken(OAuth2AuthorizationCode.class);
+		OAuth2TokenMetadata authorizationCodeMetadata = authorization.getTokens().getTokenMetadata(authorizationCode);
 
 		OAuth2AuthorizationRequest authorizationRequest = authorization.getAttribute(
 				OAuth2AuthorizationAttributeNames.AUTHORIZATION_REQUEST);
+
+		if (!registeredClient.getClientId().equals(authorizationRequest.getClientId())) {
+			if (!authorizationCodeMetadata.isInvalidated()) {
+				// Invalidate the authorization code given that a different client is attempting to use it
+				authorization = OAuth2AuthenticationProviderUtils.invalidate(authorization, authorizationCode);
+				this.authorizationService.save(authorization);
+			}
+			throw new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.INVALID_GRANT));
+		}
+
 		if (StringUtils.hasText(authorizationRequest.getRedirectUri()) &&
 				!authorizationRequest.getRedirectUri().equals(authorizationCodeAuthentication.getRedirectUri())) {
 			throw new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.INVALID_GRANT));
 		}
 
-		JoseHeader joseHeader = JoseHeader.withAlgorithm(SignatureAlgorithm.RS256).build();
+		if (authorizationCodeMetadata.isInvalidated()) {
+			throw new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.INVALID_GRANT));
+		}
 
-		// TODO Allow configuration for issuer claim
-		URL issuer = null;
-		try {
-			issuer = URI.create("https://oauth2.provider.com").toURL();
-		} catch (MalformedURLException e) { }
-
-		Instant issuedAt = Instant.now();
-		Instant expiresAt = issuedAt.plus(1, ChronoUnit.HOURS);		// TODO Allow configuration for access token time-to-live
-
-		JwtClaimsSet jwtClaimsSet = JwtClaimsSet.withClaims()
-				.issuer(issuer)
-				.subject(authorization.getPrincipalName())
-				.audience(Collections.singletonList(clientPrincipal.getRegisteredClient().getClientId()))
-				.issuedAt(issuedAt)
-				.expiresAt(expiresAt)
-				.notBefore(issuedAt)
-				.claim(OAuth2ParameterNames.SCOPE, authorizationRequest.getScopes())
-				.build();
-
-		Jwt jwt = this.jwtEncoder.encode(joseHeader, jwtClaimsSet);
-
+		Set<String> authorizedScopes = authorization.getAttribute(OAuth2AuthorizationAttributeNames.AUTHORIZED_SCOPES);
+		Jwt jwt = OAuth2TokenIssuerUtil
+			.issueJwtAccessToken(this.jwtEncoder, authorization.getPrincipalName(), registeredClient.getClientId(), authorizedScopes);
 		OAuth2AccessToken accessToken = new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER,
-				jwt.getTokenValue(), jwt.getIssuedAt(), jwt.getExpiresAt(), jwt.getClaim(OAuth2ParameterNames.SCOPE));
+				jwt.getTokenValue(), jwt.getIssuedAt(), jwt.getExpiresAt(), authorizedScopes);
 
+		OAuth2Tokens.Builder tokensBuilder = OAuth2Tokens.from(authorization.getTokens())
+				.accessToken(accessToken);
+
+		OAuth2RefreshToken refreshToken = null;
+		if (registeredClient.getTokenSettings().enableRefreshTokens()) {
+			refreshToken = OAuth2TokenIssuerUtil.issueRefreshToken(registeredClient.getTokenSettings().refreshTokenTimeToLive());
+			tokensBuilder.refreshToken(refreshToken);
+		}
+
+		OAuth2Tokens tokens = tokensBuilder.build();
 		authorization = OAuth2Authorization.from(authorization)
+				.tokens(tokens)
 				.attribute(OAuth2AuthorizationAttributeNames.ACCESS_TOKEN_ATTRIBUTES, jwt)
-				.accessToken(accessToken)
 				.build();
+
+		// Invalidate the authorization code as it can only be used once
+		authorization = OAuth2AuthenticationProviderUtils.invalidate(authorization, authorizationCode);
+
 		this.authorizationService.save(authorization);
 
-		return new OAuth2AccessTokenAuthenticationToken(
-				clientPrincipal.getRegisteredClient(), clientPrincipal, accessToken);
+		return new OAuth2AccessTokenAuthenticationToken(registeredClient, clientPrincipal, accessToken, refreshToken);
 	}
 
 	@Override

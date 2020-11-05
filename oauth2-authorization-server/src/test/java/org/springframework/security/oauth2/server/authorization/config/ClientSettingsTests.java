@@ -30,8 +30,9 @@ public class ClientSettingsTests {
 	@Test
 	public void constructorWhenDefaultThenDefaultsAreSet() {
 		ClientSettings clientSettings = new ClientSettings();
-		assertThat(clientSettings.settings()).hasSize(1);
+		assertThat(clientSettings.settings()).hasSize(2);
 		assertThat(clientSettings.requireProofKey()).isFalse();
+		assertThat(clientSettings.requireUserConsent()).isFalse();
 	}
 
 	@Test
@@ -45,5 +46,25 @@ public class ClientSettingsTests {
 	public void requireProofKeyWhenTrueThenSet() {
 		ClientSettings clientSettings = new ClientSettings().requireProofKey(true);
 		assertThat(clientSettings.requireProofKey()).isTrue();
+	}
+
+	@Test
+	public void requireUserConsentWhenTrueThenSet() {
+		ClientSettings clientSettings = new ClientSettings().requireUserConsent(true);
+		assertThat(clientSettings.requireUserConsent()).isTrue();
+	}
+
+	@Test
+	public void settingWhenCalledThenReturnClientSettings() {
+		ClientSettings clientSettings = new ClientSettings()
+				.<ClientSettings>setting("name1", "value1")
+				.requireProofKey(true)
+				.<ClientSettings>settings(settings -> settings.put("name2", "value2"))
+				.requireUserConsent(true);
+		assertThat(clientSettings.settings()).hasSize(4);
+		assertThat(clientSettings.requireProofKey()).isTrue();
+		assertThat(clientSettings.requireUserConsent()).isTrue();
+		assertThat(clientSettings.<String>setting("name1")).isEqualTo("value1");
+		assertThat(clientSettings.<String>setting("name2")).isEqualTo("value2");
 	}
 }

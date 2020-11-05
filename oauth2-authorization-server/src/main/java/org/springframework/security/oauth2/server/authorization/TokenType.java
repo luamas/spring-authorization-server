@@ -15,7 +15,6 @@
  */
 package org.springframework.security.oauth2.server.authorization;
 
-import org.springframework.security.core.SpringSecurityCoreVersion2;
 import org.springframework.util.Assert;
 
 import java.io.Serializable;
@@ -24,8 +23,9 @@ import java.io.Serializable;
  * @author Joe Grandja
  */
 public final class TokenType implements Serializable {
-	private static final long serialVersionUID = SpringSecurityCoreVersion2.SERIAL_VERSION_UID;
+	private static final long serialVersionUID = Version.SERIAL_VERSION_UID;
 	public static final TokenType ACCESS_TOKEN = new TokenType("access_token");
+	public static final TokenType REFRESH_TOKEN = new TokenType("refresh_token");
 	public static final TokenType AUTHORIZATION_CODE = new TokenType("authorization_code");
 	private final String value;
 

@@ -19,8 +19,11 @@ import org.junit.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
+import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
+import org.springframework.security.oauth2.core.endpoint.PkceParameterNames;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken;
 
 import java.net.URLEncoder;
@@ -29,6 +32,7 @@ import java.util.Base64;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
 
 /**
  * Tests for {@link ClientSecretBasicAuthenticationConverter}.
@@ -96,11 +100,33 @@ public class ClientSecretBasicAuthenticationConverterTests {
 		assertThat(authentication.getCredentials()).isEqualTo("secret");
 	}
 
+	@Test
+	public void convertWhenConfidentialClientWithPkceParametersThenAdditionalParametersIncluded() throws Exception {
+		MockHttpServletRequest request = createPkceTokenRequest();
+		request.addHeader(HttpHeaders.AUTHORIZATION, "Basic " + encodeBasicAuth("clientId", "secret"));
+		OAuth2ClientAuthenticationToken authentication = (OAuth2ClientAuthenticationToken) this.converter.convert(request);
+		assertThat(authentication.getPrincipal()).isEqualTo("clientId");
+		assertThat(authentication.getCredentials()).isEqualTo("secret");
+		assertThat(authentication.getAdditionalParameters())
+				.containsOnly(
+						entry(OAuth2ParameterNames.GRANT_TYPE, AuthorizationGrantType.AUTHORIZATION_CODE.getValue()),
+						entry(OAuth2ParameterNames.CODE, "code"),
+						entry(PkceParameterNames.CODE_VERIFIER, "code-verifier-1"));
+	}
+
 	private static String encodeBasicAuth(String clientId, String secret) throws Exception {
 		clientId = URLEncoder.encode(clientId, StandardCharsets.UTF_8.name());
 		secret = URLEncoder.encode(secret, StandardCharsets.UTF_8.name());
 		String credentialsString = clientId + ":" + secret;
 		byte[] encodedBytes = Base64.getEncoder().encode(credentialsString.getBytes(StandardCharsets.UTF_8));
 		return new String(encodedBytes, StandardCharsets.UTF_8);
+	}
+
+	private static MockHttpServletRequest createPkceTokenRequest() {
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.addParameter(OAuth2ParameterNames.GRANT_TYPE, AuthorizationGrantType.AUTHORIZATION_CODE.getValue());
+		request.addParameter(OAuth2ParameterNames.CODE, "code");
+		request.addParameter(PkceParameterNames.CODE_VERIFIER, "code-verifier-1");
+		return request;
 	}
 }

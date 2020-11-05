@@ -31,6 +31,7 @@ import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
+import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AccessTokenResponse;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.oauth2.core.http.converter.OAuth2AccessTokenResponseHttpMessageConverter;
@@ -39,6 +40,7 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AccessTokenAuthenticationToken;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeAuthenticationToken;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientCredentialsAuthenticationToken;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2RefreshTokenAuthenticationToken;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2OwnerPasswordCredentialsAuthenticationToken;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
@@ -58,6 +60,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * A {@code Filter} for the OAuth 2.0 Authorization Code Grant,
@@ -81,6 +84,7 @@ import java.util.Set;
  *
  * @author Joe Grandja
  * @author Madhu Bhat
+ * @author Daniel Garnier-Moiroux
  * @since 0.0.1
  * @see AuthenticationManager
  * @see OAuth2AuthorizationService
@@ -130,6 +134,7 @@ public class OAuth2TokenEndpointFilter extends OncePerRequestFilter {
 		this.tokenEndpointMatcher = new AntPathRequestMatcher(tokenEndpointUri, HttpMethod.POST.name());
 		Map<AuthorizationGrantType, Converter<HttpServletRequest, Authentication>> converters = new HashMap<>();
 		converters.put(AuthorizationGrantType.AUTHORIZATION_CODE, new AuthorizationCodeAuthenticationConverter());
+		converters.put(AuthorizationGrantType.REFRESH_TOKEN, new RefreshTokenAuthenticationConverter());
 		converters.put(AuthorizationGrantType.CLIENT_CREDENTIALS, new ClientCredentialsAuthenticationConverter());
 		converters.put(AuthorizationGrantType.PASSWORD, new OwnerPasswordCredentialsAuthenticationConverter(authenticationManager));
 		this.authorizationGrantAuthenticationConverter = new DelegatingAuthorizationGrantAuthenticationConverter(converters);
@@ -157,7 +162,7 @@ public class OAuth2TokenEndpointFilter extends OncePerRequestFilter {
 
 			OAuth2AccessTokenAuthenticationToken accessTokenAuthentication =
 					(OAuth2AccessTokenAuthenticationToken) this.authenticationManager.authenticate(authorizationGrantAuthentication);
-			sendAccessTokenResponse(response, accessTokenAuthentication.getAccessToken());
+			sendAccessTokenResponse(response, accessTokenAuthentication.getAccessToken(), accessTokenAuthentication.getRefreshToken());
 
 		} catch (OAuth2AuthenticationException ex) {
 			SecurityContextHolder.clearContext();
@@ -165,13 +170,18 @@ public class OAuth2TokenEndpointFilter extends OncePerRequestFilter {
 		}
 	}
 
-	private void sendAccessTokenResponse(HttpServletResponse response, OAuth2AccessToken accessToken) throws IOException {
+	private void sendAccessTokenResponse(HttpServletResponse response, OAuth2AccessToken accessToken,
+			OAuth2RefreshToken refreshToken) throws IOException {
+
 		OAuth2AccessTokenResponse.Builder builder =
 				OAuth2AccessTokenResponse.withToken(accessToken.getTokenValue())
 						.tokenType(accessToken.getTokenType())
 						.scopes(accessToken.getScopes());
 		if (accessToken.getIssuedAt() != null && accessToken.getExpiresAt() != null) {
 			builder.expiresIn(ChronoUnit.SECONDS.between(accessToken.getIssuedAt(), accessToken.getExpiresAt()));
+		}
+		if (refreshToken != null) {
+			builder.refreshToken(refreshToken.getTokenValue());
 		}
 		OAuth2AccessTokenResponse accessTokenResponse = builder.build();
 		ServletServerHttpResponse httpResponse = new ServletServerHttpResponse(response);
@@ -200,18 +210,9 @@ public class OAuth2TokenEndpointFilter extends OncePerRequestFilter {
 				return null;
 			}
 
-			MultiValueMap<String, String> parameters = OAuth2EndpointUtils.getParameters(request);
+			Authentication clientPrincipal = SecurityContextHolder.getContext().getAuthentication();
 
-			// client_id (REQUIRED)
-			String clientId = parameters.getFirst(OAuth2ParameterNames.CLIENT_ID);
-			Authentication clientPrincipal = null;
-			if (StringUtils.hasText(clientId)) {
-				if (parameters.get(OAuth2ParameterNames.CLIENT_ID).size() != 1) {
-					throwError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.CLIENT_ID);
-				}
-			} else {
-				clientPrincipal = SecurityContextHolder.getContext().getAuthentication();
-			}
+			MultiValueMap<String, String> parameters = OAuth2EndpointUtils.getParameters(request);
 
 			// code (REQUIRED)
 			String code = parameters.getFirst(OAuth2ParameterNames.CODE);
@@ -228,9 +229,53 @@ public class OAuth2TokenEndpointFilter extends OncePerRequestFilter {
 				throwError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.REDIRECT_URI);
 			}
 
-			return clientPrincipal != null ?
-					new OAuth2AuthorizationCodeAuthenticationToken(code, clientPrincipal, redirectUri) :
-					new OAuth2AuthorizationCodeAuthenticationToken(code, clientId, redirectUri);
+			Map<String, Object> additionalParameters = parameters
+					.entrySet()
+					.stream()
+					.filter(e -> !e.getKey().equals(OAuth2ParameterNames.GRANT_TYPE) &&
+							!e.getKey().equals(OAuth2ParameterNames.CLIENT_ID) &&
+							!e.getKey().equals(OAuth2ParameterNames.CODE) &&
+							!e.getKey().equals(OAuth2ParameterNames.REDIRECT_URI))
+					.collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().get(0)));
+
+			return new OAuth2AuthorizationCodeAuthenticationToken(code, clientPrincipal, redirectUri, additionalParameters);
+		}
+	}
+
+	private static class RefreshTokenAuthenticationConverter implements Converter<HttpServletRequest, Authentication> {
+
+		@Override
+		public Authentication convert(HttpServletRequest request) {
+			// grant_type (REQUIRED)
+			String grantType = request.getParameter(OAuth2ParameterNames.GRANT_TYPE);
+			if (!AuthorizationGrantType.REFRESH_TOKEN.getValue().equals(grantType)) {
+				return null;
+			}
+
+			Authentication clientPrincipal = SecurityContextHolder.getContext().getAuthentication();
+
+			MultiValueMap<String, String> parameters = OAuth2EndpointUtils.getParameters(request);
+
+			// refresh_token (REQUIRED)
+			String refreshToken = parameters.getFirst(OAuth2ParameterNames.REFRESH_TOKEN);
+			if (!StringUtils.hasText(refreshToken) ||
+					parameters.get(OAuth2ParameterNames.REFRESH_TOKEN).size() != 1) {
+				throwError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.REFRESH_TOKEN);
+			}
+
+			// scope (OPTIONAL)
+			String scope = parameters.getFirst(OAuth2ParameterNames.SCOPE);
+			if (StringUtils.hasText(scope) &&
+					parameters.get(OAuth2ParameterNames.SCOPE).size() != 1) {
+				throwError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.SCOPE);
+			}
+			if (StringUtils.hasText(scope)) {
+				Set<String> requestedScopes = new HashSet<>(
+						Arrays.asList(StringUtils.delimitedListToStringArray(scope, " ")));
+				return new OAuth2RefreshTokenAuthenticationToken(refreshToken, clientPrincipal, requestedScopes);
+			}
+
+			return new OAuth2RefreshTokenAuthenticationToken(refreshToken, clientPrincipal);
 		}
 	}
 

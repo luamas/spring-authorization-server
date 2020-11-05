@@ -15,7 +15,7 @@
  */
 package org.springframework.security.oauth2.server.authorization.client;
 
-import org.springframework.security.core.SpringSecurityCoreVersion2;
+import org.springframework.security.oauth2.server.authorization.Version;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
 import org.springframework.security.oauth2.server.authorization.config.ClientSettings;
@@ -40,7 +40,7 @@ import java.util.function.Consumer;
  * @since 0.0.1
  */
 public class RegisteredClient implements Serializable {
-	private static final long serialVersionUID = SpringSecurityCoreVersion2.SERIAL_VERSION_UID;
+	private static final long serialVersionUID = Version.SERIAL_VERSION_UID;
 	private String id;
 	private String clientId;
 	private String clientSecret;
@@ -174,7 +174,7 @@ public class RegisteredClient implements Serializable {
 	 * A builder for {@link RegisteredClient}.
 	 */
 	public static class Builder implements Serializable {
-		private static final long serialVersionUID = SpringSecurityCoreVersion2.SERIAL_VERSION_UID;
+		private static final long serialVersionUID = Version.SERIAL_VERSION_UID;
 		private String id;
 		private String clientId;
 		private String clientSecret;
@@ -182,8 +182,8 @@ public class RegisteredClient implements Serializable {
 		private Set<AuthorizationGrantType> authorizationGrantTypes = new LinkedHashSet<>();
 		private Set<String> redirectUris = new LinkedHashSet<>();
 		private Set<String> scopes = new LinkedHashSet<>();
-		private ClientSettings clientSettings;
-		private TokenSettings tokenSettings;
+		private ClientSettings clientSettings = new ClientSettings();
+		private TokenSettings tokenSettings = new TokenSettings();
 
 		protected Builder(String id) {
 			this.id = id;
@@ -337,24 +337,26 @@ public class RegisteredClient implements Serializable {
 		}
 
 		/**
-		 * Sets the {@link ClientSettings client configuration settings}.
+		 * A {@link Consumer} of the client configuration settings,
+		 * allowing the ability to add, replace, or remove.
 		 *
-		 * @param clientSettings the client configuration settings
+		 * @param clientSettingsConsumer a {@link Consumer} of the client configuration settings
 		 * @return the {@link Builder}
 		 */
-		public Builder clientSettings(ClientSettings clientSettings) {
-			this.clientSettings = clientSettings;
+		public Builder clientSettings(Consumer<ClientSettings> clientSettingsConsumer) {
+			clientSettingsConsumer.accept(this.clientSettings);
 			return this;
 		}
 
 		/**
-		 * Sets the {@link TokenSettings token configuration settings}.
+		 * A {@link Consumer} of the token configuration settings,
+		 * allowing the ability to add, replace, or remove.
 		 *
-		 * @param tokenSettings the token configuration settings
+		 * @param tokenSettingsConsumer a {@link Consumer} of the token configuration settings
 		 * @return the {@link Builder}
 		 */
-		public Builder tokenSettings(TokenSettings tokenSettings) {
-			this.tokenSettings = tokenSettings;
+		public Builder tokenSettings(Consumer<TokenSettings> tokenSettingsConsumer) {
+			tokenSettingsConsumer.accept(this.tokenSettings);
 			return this;
 		}
 
@@ -367,7 +369,6 @@ public class RegisteredClient implements Serializable {
 			Assert.hasText(this.clientId, "clientId cannot be empty");
 			Assert.notEmpty(this.authorizationGrantTypes, "authorizationGrantTypes cannot be empty");
 			if (this.authorizationGrantTypes.contains(AuthorizationGrantType.AUTHORIZATION_CODE)) {
-				Assert.hasText(this.clientSecret, "clientSecret cannot be empty");
 				Assert.notEmpty(this.redirectUris, "redirectUris cannot be empty");
 			}
 			if (CollectionUtils.isEmpty(this.clientAuthenticationMethods)) {
@@ -389,8 +390,8 @@ public class RegisteredClient implements Serializable {
 			registeredClient.authorizationGrantTypes = Collections.unmodifiableSet(this.authorizationGrantTypes);
 			registeredClient.redirectUris = Collections.unmodifiableSet(this.redirectUris);
 			registeredClient.scopes = Collections.unmodifiableSet(this.scopes);
-			registeredClient.clientSettings = this.clientSettings != null ? this.clientSettings : new ClientSettings();
-			registeredClient.tokenSettings = this.tokenSettings != null ? this.tokenSettings : new TokenSettings();
+			registeredClient.clientSettings = this.clientSettings;
+			registeredClient.tokenSettings = this.tokenSettings;
 
 			return registeredClient;
 		}
