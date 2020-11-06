@@ -82,8 +82,14 @@ public class OAuth2OwnerPasswordCredentialsAuthenticationProvider implements Aut
 	public Authentication authenticate(Authentication authentication) throws AuthenticationException {
 		OAuth2OwnerPasswordCredentialsAuthenticationToken clientPasswordAuthenticationToken =
 				(OAuth2OwnerPasswordCredentialsAuthenticationToken) authentication;
-		OAuth2ClientAuthenticationToken clientPrincipal =
-				getAuthenticatedClientElseThrowInvalidClient(clientPasswordAuthenticationToken);
+		OAuth2ClientAuthenticationToken clientPrincipal = null;
+		if (OAuth2ClientAuthenticationToken.class.isAssignableFrom(clientPasswordAuthenticationToken.getClientPrincipal().getClass())) {
+			clientPrincipal = (OAuth2ClientAuthenticationToken) clientPasswordAuthenticationToken.getClientPrincipal();
+		}
+		if (clientPrincipal == null || !clientPrincipal.isAuthenticated()) {
+			throw new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.INVALID_CLIENT));
+		}
+
 		RegisteredClient registeredClient = clientPrincipal.getRegisteredClient();
 
 		if (!registeredClient.getAuthorizationGrantTypes().contains(AuthorizationGrantType.PASSWORD)) {
