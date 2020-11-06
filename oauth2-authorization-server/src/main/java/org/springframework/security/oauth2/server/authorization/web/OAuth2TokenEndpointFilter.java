@@ -312,11 +312,6 @@ public class OAuth2TokenEndpointFilter extends OncePerRequestFilter {
 					parameters.get(OAuth2ParameterNames.SCOPE).size() != 1) {
 				throwError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.SCOPE);
 			}
-			if (StringUtils.hasText(scope)) {
-				Set<String> requestedScopes = new HashSet<>(
-						Arrays.asList(StringUtils.delimitedListToStringArray(scope, " ")));
-				return new OAuth2ClientCredentialsAuthenticationToken(clientPrincipal, requestedScopes);
-			}
 
 			String username = request.getParameter(OAuth2ParameterNames.USERNAME);
 			if (StringUtils.hasText(username) &&

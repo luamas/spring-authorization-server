@@ -19,10 +19,7 @@ import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
-import org.springframework.security.oauth2.core.OAuth2AccessToken;
-import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
-import org.springframework.security.oauth2.core.OAuth2Error;
-import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
+import org.springframework.security.oauth2.core.*;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.oauth2.jose.JoseHeader;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
@@ -33,6 +30,7 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationAttributeNames;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2Tokens;
 import org.springframework.util.Assert;
 import org.springframework.util.CollectionUtils;
 
@@ -45,6 +43,8 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import static org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthenticationProviderUtils.getAuthenticatedClientElseThrowInvalidClient;
 
 /**
  * An {@link AuthenticationProvider} implementation for the OAuth 2.0 Resource Owner Password Credentials Grant.
@@ -82,13 +82,12 @@ public class OAuth2OwnerPasswordCredentialsAuthenticationProvider implements Aut
 	public Authentication authenticate(Authentication authentication) throws AuthenticationException {
 		OAuth2OwnerPasswordCredentialsAuthenticationToken clientPasswordAuthenticationToken =
 				(OAuth2OwnerPasswordCredentialsAuthenticationToken) authentication;
+		OAuth2ClientAuthenticationToken clientPrincipal =
+				getAuthenticatedClientElseThrowInvalidClient(clientPasswordAuthenticationToken);
+		RegisteredClient registeredClient = clientPrincipal.getRegisteredClient();
 
-		OAuth2ClientAuthenticationToken clientPrincipal = null;
-		if (OAuth2ClientAuthenticationToken.class.isAssignableFrom(clientPasswordAuthenticationToken.getClientPrincipal().getClass())) {
-			clientPrincipal = (OAuth2ClientAuthenticationToken) clientPasswordAuthenticationToken.getClientPrincipal();
-		}
-		if (clientPrincipal == null || !clientPrincipal.isAuthenticated()) {
-			throw new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.INVALID_CLIENT));
+		if (!registeredClient.getAuthorizationGrantTypes().contains(AuthorizationGrantType.PASSWORD)) {
+			throw new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.INVALID_GRANT));
 		}
 		UsernamePasswordAuthenticationToken userPrincipal = null;
 
@@ -98,7 +97,6 @@ public class OAuth2OwnerPasswordCredentialsAuthenticationProvider implements Aut
 		if (userPrincipal == null || !userPrincipal.isAuthenticated()) {
 			throw new OAuth2AuthenticationException(new OAuth2Error("invalid_user"));
 		}
-		RegisteredClient registeredClient = clientPrincipal.getRegisteredClient();
 
 		Set<String> scopes = registeredClient.getScopes();		// Default to configured scopes
 		if (!CollectionUtils.isEmpty(clientPasswordAuthenticationToken.getScopes())) {
@@ -111,36 +109,15 @@ public class OAuth2OwnerPasswordCredentialsAuthenticationProvider implements Aut
 			scopes = new LinkedHashSet<>(clientPasswordAuthenticationToken.getScopes());
 		}
 
-		JoseHeader joseHeader = JoseHeader.withAlgorithm(SignatureAlgorithm.RS256).build();
-
-		// TODO Allow configuration for issuer claim
-		URL issuer = null;
-		try {
-			issuer = URI.create("https://oauth2.provider.com").toURL();
-		} catch (MalformedURLException e) { }
-
-		Instant issuedAt = Instant.now();
-		Instant expiresAt = issuedAt.plus(1, ChronoUnit.HOURS);		// TODO Allow configuration for access token time-to-live
-
-		JwtClaimsSet jwtClaimsSet = JwtClaimsSet.withClaims()
-				.issuer(issuer)
-				.subject(clientPrincipal.getName())
-				.audience(Collections.singletonList(registeredClient.getClientId()))
-				.issuedAt(issuedAt)
-				.expiresAt(expiresAt)
-				.notBefore(issuedAt)
-				.claim(OAuth2ParameterNames.SCOPE, scopes)
-				.build();
-
-		Jwt jwt = this.jwtEncoder.encode(joseHeader, jwtClaimsSet);
-
+		Jwt jwt = OAuth2TokenIssuerUtil
+				.issueJwtAccessToken(this.jwtEncoder, clientPrincipal.getName(), registeredClient.getClientId(), scopes);
 		OAuth2AccessToken accessToken = new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER,
 				jwt.getTokenValue(), jwt.getIssuedAt(), jwt.getExpiresAt(), scopes);
 
 		OAuth2Authorization authorization = OAuth2Authorization.withRegisteredClient(registeredClient)
+				.principalName(clientPrincipal.getName())
+				.tokens(OAuth2Tokens.builder().accessToken(accessToken).build())
 				.attribute(OAuth2AuthorizationAttributeNames.ACCESS_TOKEN_ATTRIBUTES, jwt)
-				.principalName(userPrincipal.getName())
-				.accessToken(accessToken)
 				.build();
 		this.authorizationService.save(authorization);
 
