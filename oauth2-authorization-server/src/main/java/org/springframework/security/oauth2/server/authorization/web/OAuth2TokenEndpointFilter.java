@@ -333,6 +333,11 @@ public class OAuth2TokenEndpointFilter extends OncePerRequestFilter {
 			catch (BadCredentialsException e) {
 				throwError(OAuth2ErrorCodes.INVALID_REQUEST, e.getMessage());
 			}
+			if (StringUtils.hasText(scope)) {
+				Set<String> requestedScopes = new HashSet<>(
+						Arrays.asList(StringUtils.delimitedListToStringArray(scope, " ")));
+				return new OAuth2OwnerPasswordCredentialsAuthenticationToken(clientPrincipal, requestedScopes, userAuth);
+			}
 			return new OAuth2OwnerPasswordCredentialsAuthenticationToken(clientPrincipal, userAuth);
 		}
 	}
