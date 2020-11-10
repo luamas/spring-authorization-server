@@ -13,25 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.springframework.security.oauth2.server.authorization;
+package org.springframework.security.oauth2.core;
 
 /**
- * Internal class used for serialization across Spring Security Authorization Server classes.
+ * TODO
+ * This class is temporary and will be removed after upgrading to Spring Security 5.5.0 GA.
  *
- * @author Anoop Garlapati
- * @since 0.0.1
+ * @author Joe Grandja
+ * @since 0.0.3
+ * @see <a target="_blank" href="https://github.com/spring-projects/spring-security/issues/9184">Issue gh-9184</a>
  */
-public final class Version {
-	private static final int MAJOR = 0;
-	private static final int MINOR = 1;
-	private static final int PATCH = 0;
+public interface OAuth2ErrorCodes2 extends OAuth2ErrorCodes {
 
-	/**
-	 * Global Serialization value for Spring Security Authorization Server classes.
-	 */
-	public static final long SERIAL_VERSION_UID = getVersion().hashCode();
+	String UNSUPPORTED_TOKEN_TYPE = "unsupported_token_type";
 
-	public static String getVersion() {
-		return MAJOR + "." + MINOR + "." + PATCH;
-	}
 }

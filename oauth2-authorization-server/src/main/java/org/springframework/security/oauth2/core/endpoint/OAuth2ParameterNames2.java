@@ -13,25 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.springframework.security.oauth2.server.authorization;
+package org.springframework.security.oauth2.core.endpoint;
 
 /**
- * Internal class used for serialization across Spring Security Authorization Server classes.
+ * TODO
+ * This class is temporary and will be removed after upgrading to Spring Security 5.5.0 GA.
  *
- * @author Anoop Garlapati
- * @since 0.0.1
+ * @author Joe Grandja
+ * @since 0.0.3
+ * @see <a target="_blank" href="https://github.com/spring-projects/spring-security/issues/9183">Issue gh-9183</a>
  */
-public final class Version {
-	private static final int MAJOR = 0;
-	private static final int MINOR = 1;
-	private static final int PATCH = 0;
+public interface OAuth2ParameterNames2 extends OAuth2ParameterNames {
 
-	/**
-	 * Global Serialization value for Spring Security Authorization Server classes.
-	 */
-	public static final long SERIAL_VERSION_UID = getVersion().hashCode();
+	String TOKEN = "token";
 
-	public static String getVersion() {
-		return MAJOR + "." + MINOR + "." + PATCH;
-	}
+	String TOKEN_TYPE_HINT = "token_type_hint";
+
 }

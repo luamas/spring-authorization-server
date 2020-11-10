@@ -1,13 +1,13 @@
 if (!project.hasProperty("springVersion")) {
-	ext.springVersion = "5.2.+"
+	ext.springVersion = "5.3.+"
 }
 
 if (!project.hasProperty("springSecurityVersion")) {
-	ext.springSecurityVersion = "5.5.+"
+	ext.springSecurityVersion = "5.4.+"
 }
 
 if (!project.hasProperty("reactorVersion")) {
-	ext.reactorVersion = "Dysprosium-SR+"
+	ext.reactorVersion = "2020.0.+"
 }
 
 if (!project.hasProperty("locksDisabled")) {
@@ -34,34 +34,5 @@ dependencyManagement {
 		dependency "com.squareup.okhttp3:mockwebserver:3.+"
 		dependency "com.squareup.okhttp3:okhttp:3.+"
 		dependency "com.jayway.jsonpath:json-path:2.+"
-	}
-}
-
-/*
-NOTE:
-The latest `reactor-netty` dependency was split into `reactor-netty-core` and `reactor-netty-http`,
-which resulted in the snapshot build to fail. The below configuration fixes it.
-
-Reference:
-- https://github.com/spring-projects/spring-security/issues/8909
-- https://github.com/reactor/reactor-netty/issues/739#issuecomment-667047117
-*/
-if (reactorVersion.startsWith('20')) {
-	if (reactorVersion.endsWith('SNAPSHOT') || reactorVersion.endsWith('+')) {
-		ext.reactorLatestVersion = "latest.integration"
-	} else {
-		ext.reactorLatestVersion = "latest.release"
-	}
-	configurations {
-		all {
-			resolutionStrategy {
-				eachDependency { DependencyResolveDetails details ->
-					if (details.requested.name == 'reactor-netty') {
-						details.useTarget("${details.requested.group}:reactor-netty-http:${reactorLatestVersion}")
-						details.because("reactor-netty is now split into reactor-netty-core and reactor-netty-http")
-					}
-				}
-			}
-		}
 	}
 }
