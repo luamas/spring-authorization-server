@@ -44,11 +44,25 @@ public class TestRegisteredClients {
 				.authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
 				.authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
 				.clientAuthenticationMethod(ClientAuthenticationMethod.BASIC)
+				.clientAuthenticationMethod(ClientAuthenticationMethod.POST)
 				.redirectUri("https://example.com")
 				.scope("openid")
 				.scope("profile")
 				.scope("email")
 				.scope("scope1")
 				.scope("scope2");
+	}
+
+	public static RegisteredClient.Builder registeredPublicClient() {
+		return RegisteredClient.withId("registration-3")
+				.clientId("client-3")
+				.authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+				.clientAuthenticationMethod(ClientAuthenticationMethod.NONE)
+				.redirectUri("https://example.com")
+				.scope("openid")
+				.scope("profile")
+				.scope("email")
+				.clientSettings(clientSettings -> clientSettings.requireProofKey(true))
+				.tokenSettings(tokenSettings -> tokenSettings.enableRefreshTokens(false));
 	}
 }
