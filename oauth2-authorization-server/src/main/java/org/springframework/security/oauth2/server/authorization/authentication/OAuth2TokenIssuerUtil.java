@@ -20,11 +20,13 @@ import org.springframework.security.crypto.keygen.StringKeyGenerator;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken2;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
+import org.springframework.security.oauth2.core.oidc.IdTokenClaimNames;
 import org.springframework.security.oauth2.jose.JoseHeader;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.util.StringUtils;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -41,14 +43,14 @@ class OAuth2TokenIssuerUtil {
 
 	private static final StringKeyGenerator TOKEN_GENERATOR = new Base64StringKeyGenerator(Base64.getUrlEncoder().withoutPadding(), 96);
 
-	static Jwt issueJwtAccessToken(JwtEncoder jwtEncoder, String subject, String audience, Set<String> scopes) {
+	static Jwt issueJwtAccessToken(JwtEncoder jwtEncoder, String subject, String audience, Set<String> scopes, Duration tokenTimeToLive) {
 		JoseHeader joseHeader = JoseHeader.withAlgorithm(SignatureAlgorithm.RS256).build();
 
-		String issuer = "https://oauth2.provider.com";		// TODO Allow configuration for issuer claim
+		String issuer = "http://auth-server:9000";		// TODO Allow configuration for issuer claim
 		Instant issuedAt = Instant.now();
-		Instant expiresAt = issuedAt.plus(1, ChronoUnit.HOURS);		// TODO Allow configuration for access token time-to-live
+		Instant expiresAt = issuedAt.plus(tokenTimeToLive);
 
-		JwtClaimsSet jwtClaimsSet = JwtClaimsSet.withClaims()
+		JwtClaimsSet jwtClaimsSet = JwtClaimsSet.builder()
 											.issuer(issuer)
 											.subject(subject)
 											.audience(Collections.singletonList(audience))
@@ -61,9 +63,34 @@ class OAuth2TokenIssuerUtil {
 		return jwtEncoder.encode(joseHeader, jwtClaimsSet);
 	}
 
-	static OAuth2RefreshToken issueRefreshToken(Duration refreshTokenTimeToLive) {
+	static Jwt issueIdToken(JwtEncoder jwtEncoder, String subject, String audience, String nonce) {
+		JoseHeader joseHeader = JoseHeader.withAlgorithm(SignatureAlgorithm.RS256).build();
+
+		String issuer = "http://auth-server:9000";		// TODO Allow configuration for issuer claim
 		Instant issuedAt = Instant.now();
-		Instant expiresAt = issuedAt.plus(refreshTokenTimeToLive);
+		Instant expiresAt = issuedAt.plus(30, ChronoUnit.MINUTES);		// TODO Allow configuration for id token time-to-live
+
+		JwtClaimsSet.Builder builder = JwtClaimsSet.builder()
+				.issuer(issuer)
+				.subject(subject)
+				.audience(Collections.singletonList(audience))
+				.issuedAt(issuedAt)
+				.expiresAt(expiresAt)
+				.claim(IdTokenClaimNames.AZP, audience);
+		if (StringUtils.hasText(nonce)) {
+			builder.claim(IdTokenClaimNames.NONCE, nonce);
+		}
+
+		// TODO Add 'auth_time' claim
+
+		JwtClaimsSet jwtClaimsSet = builder.build();
+
+		return jwtEncoder.encode(joseHeader, jwtClaimsSet);
+	}
+
+	static OAuth2RefreshToken issueRefreshToken(Duration tokenTimeToLive) {
+		Instant issuedAt = Instant.now();
+		Instant expiresAt = issuedAt.plus(tokenTimeToLive);
 
 		return new OAuth2RefreshToken2(TOKEN_GENERATOR.generateKey(), issuedAt, expiresAt);
 	}

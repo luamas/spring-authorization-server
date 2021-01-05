@@ -33,11 +33,11 @@ import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
+import org.springframework.security.oauth2.core.OAuth2RefreshToken2;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AccessTokenResponse;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.oauth2.core.http.converter.OAuth2AccessTokenResponseHttpMessageConverter;
 import org.springframework.security.oauth2.core.http.converter.OAuth2ErrorHttpMessageConverter;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AccessTokenAuthenticationToken;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeAuthenticationToken;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken;
@@ -53,10 +53,13 @@ import javax.servlet.http.HttpServletResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -72,7 +75,6 @@ import static org.mockito.Mockito.when;
  */
 public class OAuth2TokenEndpointFilterTests {
 	private AuthenticationManager authenticationManager;
-	private OAuth2AuthorizationService authorizationService;
 	private OAuth2TokenEndpointFilter filter;
 	private final HttpMessageConverter<OAuth2Error> errorHttpResponseConverter =
 			new OAuth2ErrorHttpMessageConverter();
@@ -82,8 +84,7 @@ public class OAuth2TokenEndpointFilterTests {
 	@Before
 	public void setUp() {
 		this.authenticationManager = mock(AuthenticationManager.class);
-		this.authorizationService = mock(OAuth2AuthorizationService.class);
-		this.filter = new OAuth2TokenEndpointFilter(this.authenticationManager, this.authorizationService);
+		this.filter = new OAuth2TokenEndpointFilter(this.authenticationManager);
 	}
 
 	@After
@@ -93,21 +94,14 @@ public class OAuth2TokenEndpointFilterTests {
 
 	@Test
 	public void constructorWhenAuthenticationManagerNullThenThrowIllegalArgumentException() {
-		assertThatThrownBy(() -> new OAuth2TokenEndpointFilter(null, this.authorizationService))
+		assertThatThrownBy(() -> new OAuth2TokenEndpointFilter(null, "tokenEndpointUri"))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessage("authenticationManager cannot be null");
 	}
 
 	@Test
-	public void constructorWhenAuthorizationServiceNullThenThrowIllegalArgumentException() {
-		assertThatThrownBy(() -> new OAuth2TokenEndpointFilter(this.authenticationManager, null))
-				.isInstanceOf(IllegalArgumentException.class)
-				.hasMessage("authorizationService cannot be null");
-	}
-
-	@Test
 	public void constructorWhenTokenEndpointUriNullThenThrowIllegalArgumentException() {
-		assertThatThrownBy(() -> new OAuth2TokenEndpointFilter(this.authenticationManager, this.authorizationService, null))
+		assertThatThrownBy(() -> new OAuth2TokenEndpointFilter(this.authenticationManager, null))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessage("tokenEndpointUri cannot be empty");
 	}
@@ -199,16 +193,19 @@ public class OAuth2TokenEndpointFilterTests {
 	}
 
 	@Test
-	public void doFilterWhenAuthorizationCodeTokenRequestValidThenAccessTokenResponse() throws Exception {
+	public void doFilterWhenAuthorizationCodeTokenRequestThenAccessTokenResponse() throws Exception {
 		RegisteredClient registeredClient = TestRegisteredClients.registeredClient().build();
 		Authentication clientPrincipal = new OAuth2ClientAuthenticationToken(registeredClient);
 		OAuth2AccessToken accessToken = new OAuth2AccessToken(
 				OAuth2AccessToken.TokenType.BEARER, "token",
 				Instant.now(), Instant.now().plus(Duration.ofHours(1)),
 				new HashSet<>(Arrays.asList("scope1", "scope2")));
+		OAuth2RefreshToken refreshToken = new OAuth2RefreshToken2(
+				"refresh-token", Instant.now(), Instant.now().plus(Duration.ofDays(1)));
+		Map<String, Object> additionalParameters = Collections.singletonMap("custom-param", "custom-value");
 		OAuth2AccessTokenAuthenticationToken accessTokenAuthentication =
 				new OAuth2AccessTokenAuthenticationToken(
-						registeredClient, clientPrincipal, accessToken);
+						registeredClient, clientPrincipal, accessToken, refreshToken, additionalParameters);
 
 		when(this.authenticationManager.authenticate(any())).thenReturn(accessTokenAuthentication);
 
@@ -247,6 +244,8 @@ public class OAuth2TokenEndpointFilterTests {
 		assertThat(accessTokenResult.getExpiresAt()).isBetween(
 				accessToken.getExpiresAt().minusSeconds(1), accessToken.getExpiresAt().plusSeconds(1));
 		assertThat(accessTokenResult.getScopes()).isEqualTo(accessToken.getScopes());
+		assertThat(accessTokenResponse.getRefreshToken().getTokenValue()).isEqualTo(refreshToken.getTokenValue());
+		assertThat(accessTokenResponse.getAdditionalParameters()).containsExactly(entry("custom-param", "custom-value"));
 	}
 
 	@Test
@@ -260,7 +259,7 @@ public class OAuth2TokenEndpointFilterTests {
 	}
 
 	@Test
-	public void doFilterWhenClientCredentialsTokenRequestValidThenAccessTokenResponse() throws Exception {
+	public void doFilterWhenClientCredentialsTokenRequestThenAccessTokenResponse() throws Exception {
 		RegisteredClient registeredClient = TestRegisteredClients.registeredClient2().build();
 		Authentication clientPrincipal = new OAuth2ClientAuthenticationToken(registeredClient);
 		OAuth2AccessToken accessToken = new OAuth2AccessToken(
@@ -338,7 +337,7 @@ public class OAuth2TokenEndpointFilterTests {
 	}
 
 	@Test
-	public void doFilterWhenRefreshTokenRequestValidThenAccessTokenResponse() throws Exception {
+	public void doFilterWhenRefreshTokenRequestThenAccessTokenResponse() throws Exception {
 		RegisteredClient registeredClient = TestRegisteredClients.registeredClient().build();
 		Authentication clientPrincipal = new OAuth2ClientAuthenticationToken(registeredClient);
 		OAuth2AccessToken accessToken = new OAuth2AccessToken(

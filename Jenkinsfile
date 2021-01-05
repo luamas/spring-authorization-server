@@ -32,13 +32,14 @@ try {
 				checkout scm
 				sh "git clean -dfx"
 				try {
-					withCredentials([GRADLE_ENTERPRISE_CACHE_USER,
+					withCredentials([ARTIFACTORY_CREDENTIALS,
+						 GRADLE_ENTERPRISE_CACHE_USER,
 						 GRADLE_ENTERPRISE_SECRET_ACCESS_KEY]) {
 						withEnv([jdkEnv(),
 							 "GRADLE_ENTERPRISE_CACHE_USERNAME=${GRADLE_ENTERPRISE_CACHE_USERNAME}",
 							 "GRADLE_ENTERPRISE_CACHE_PASSWORD=${GRADLE_ENTERPRISE_CACHE_PASSWORD}",
 							 "GRADLE_ENTERPRISE_ACCESS_KEY=${GRADLE_ENTERPRISE_ACCESS_KEY}"]) {
-							sh "./gradlew check --stacktrace"
+							sh "./gradlew check -PartifactoryUsername=$ARTIFACTORY_USERNAME -PartifactoryPassword=$ARTIFACTORY_PASSWORD --stacktrace"
 						}
 					}
 				} catch(Exception e) {

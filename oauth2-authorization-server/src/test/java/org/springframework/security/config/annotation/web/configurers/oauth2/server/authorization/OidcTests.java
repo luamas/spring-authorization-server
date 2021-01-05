@@ -32,24 +32,20 @@ import org.springframework.security.crypto.key.StaticKeyGeneratingCryptoKeySourc
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationResponseType;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
-import org.springframework.security.oauth2.core.endpoint.PkceParameterNames;
-import org.springframework.security.oauth2.jose.JoseHeader;
-import org.springframework.security.oauth2.jose.jws.NimbusJwsEncoder;
-import org.springframework.security.oauth2.jwt.JwtClaimsSet;
-import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.core.oidc.OidcScopes;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
-import org.springframework.security.oauth2.server.authorization.TestOAuth2Authorizations;
 import org.springframework.security.oauth2.server.authorization.TokenType;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.client.TestRegisteredClients;
+import org.springframework.security.oauth2.server.authorization.config.ProviderSettings;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2AuthorizationCode;
 import org.springframework.security.oauth2.server.authorization.web.OAuth2AuthorizationEndpointFilter;
 import org.springframework.security.oauth2.server.authorization.web.OAuth2TokenEndpointFilter;
+import org.springframework.security.oauth2.server.authorization.oidc.web.OidcProviderConfigurationEndpointFilter;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
@@ -57,9 +53,9 @@ import org.springframework.util.StringUtils;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import java.util.function.BiConsumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -67,7 +63,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -77,22 +72,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Integration tests for the OAuth 2.0 Authorization Code Grant.
+ * Integration tests for OpenID Connect 1.0.
  *
- * @author Joe Grandja
  * @author Daniel Garnier-Moiroux
  */
-public class OAuth2AuthorizationCodeGrantTests {
-	// See RFC 7636: Appendix B.  Example for the S256 code_challenge_method
-	// https://tools.ietf.org/html/rfc7636#appendix-B
-	private static final String S256_CODE_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-	private static final String S256_CODE_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
-
+public class OidcTests {
+	private static final String issuerUrl = "https://example.com/issuer1";
 	private static RegisteredClientRepository registeredClientRepository;
 	private static OAuth2AuthorizationService authorizationService;
 	private static CryptoKeySource keySource;
-	private static NimbusJwsEncoder jwtEncoder;
-	private static BiConsumer<JoseHeader.Builder, JwtClaimsSet.Builder> jwtCustomizer;
 
 	@Rule
 	public final SpringTestRule spring = new SpringTestRule();
@@ -105,9 +93,6 @@ public class OAuth2AuthorizationCodeGrantTests {
 		registeredClientRepository = mock(RegisteredClientRepository.class);
 		authorizationService = mock(OAuth2AuthorizationService.class);
 		keySource = new StaticKeyGeneratingCryptoKeySource();
-		jwtEncoder = new NimbusJwsEncoder(keySource);
-		jwtCustomizer = mock(BiConsumer.class);
-		jwtEncoder.setJwtCustomizer(jwtCustomizer);
 	}
 
 	@Before
@@ -117,88 +102,48 @@ public class OAuth2AuthorizationCodeGrantTests {
 	}
 
 	@Test
-	public void requestWhenAuthorizationRequestNotAuthenticatedThenRedirectToLogin() throws Exception {
+	public void requestWhenConfigurationRequestAndIssuerSetThenReturnConfigurationResponse() throws Exception {
+		this.spring.register(AuthorizationServerConfigurationWithIssuer.class).autowire();
+
+		this.mvc.perform(get(OidcProviderConfigurationEndpointFilter.DEFAULT_OIDC_PROVIDER_CONFIGURATION_ENDPOINT_URI))
+				.andExpect(status().is2xxSuccessful())
+				.andExpect(jsonPath("issuer").value(issuerUrl));
+	}
+
+	@Test
+	public void requestWhenConfigurationRequestAndIssuerNotSetThenRedirectToLogin() throws Exception {
 		this.spring.register(AuthorizationServerConfiguration.class).autowire();
 
-		RegisteredClient registeredClient = TestRegisteredClients.registeredClient().build();
-		when(registeredClientRepository.findByClientId(eq(registeredClient.getClientId())))
-				.thenReturn(registeredClient);
-
-		MvcResult mvcResult = this.mvc.perform(MockMvcRequestBuilders.get(OAuth2AuthorizationEndpointFilter.DEFAULT_AUTHORIZATION_ENDPOINT_URI)
-				.params(getAuthorizationRequestParameters(registeredClient)))
+		MvcResult mvcResult = this.mvc.perform(get(OidcProviderConfigurationEndpointFilter.DEFAULT_OIDC_PROVIDER_CONFIGURATION_ENDPOINT_URI))
 				.andExpect(status().is3xxRedirection())
 				.andReturn();
 		assertThat(mvcResult.getResponse().getRedirectedUrl()).endsWith("/login");
-
-		verify(registeredClientRepository).findByClientId(eq(registeredClient.getClientId()));
-		verifyNoInteractions(authorizationService);
 	}
 
 	@Test
-	public void requestWhenAuthorizationRequestAuthenticatedThenRedirectToClient() throws Exception {
+	public void loadContextWhenIssuerNotValidUrlThenThrowException() {
+		assertThatThrownBy(
+				() -> this.spring.register(AuthorizationServerConfigurationWithInvalidIssuerUrl.class).autowire()
+		);
+	}
+
+	@Test
+	public void loadContextWhenIssuerNotValidUriThenThrowException() {
+		assertThatThrownBy(
+				() -> this.spring.register(AuthorizationServerConfigurationWithInvalidIssuerUri.class).autowire()
+		);
+	}
+
+	@Test
+	public void requestWhenAuthenticationRequestThenTokenResponseIncludesIdToken() throws Exception {
 		this.spring.register(AuthorizationServerConfiguration.class).autowire();
 
-		RegisteredClient registeredClient = TestRegisteredClients.registeredClient().build();
+		RegisteredClient registeredClient = TestRegisteredClients.registeredClient().scope(OidcScopes.OPENID).build();
 		when(registeredClientRepository.findByClientId(eq(registeredClient.getClientId())))
 				.thenReturn(registeredClient);
 
 		MvcResult mvcResult = this.mvc.perform(get(OAuth2AuthorizationEndpointFilter.DEFAULT_AUTHORIZATION_ENDPOINT_URI)
 				.params(getAuthorizationRequestParameters(registeredClient))
-				.with(user("user")))
-				.andExpect(status().is3xxRedirection())
-				.andReturn();
-		assertThat(mvcResult.getResponse().getRedirectedUrl()).matches("https://example.com\\?code=.{15,}&state=state");
-
-		verify(registeredClientRepository).findByClientId(eq(registeredClient.getClientId()));
-		verify(authorizationService).save(any());
-	}
-
-	@Test
-	public void requestWhenTokenRequestValidThenReturnAccessTokenResponse() throws Exception {
-		this.spring.register(AuthorizationServerConfiguration.class).autowire();
-
-		RegisteredClient registeredClient = TestRegisteredClients.registeredClient().build();
-		when(registeredClientRepository.findByClientId(eq(registeredClient.getClientId())))
-				.thenReturn(registeredClient);
-
-		OAuth2Authorization authorization = TestOAuth2Authorizations.authorization(registeredClient).build();
-		when(authorizationService.findByToken(
-				eq(authorization.getTokens().getToken(OAuth2AuthorizationCode.class).getTokenValue()),
-				eq(TokenType.AUTHORIZATION_CODE)))
-				.thenReturn(authorization);
-
-		this.mvc.perform(post(OAuth2TokenEndpointFilter.DEFAULT_TOKEN_ENDPOINT_URI)
-				.params(getTokenRequestParameters(registeredClient, authorization))
-				.header(HttpHeaders.AUTHORIZATION, "Basic " + encodeBasicAuth(
-						registeredClient.getClientId(), registeredClient.getClientSecret())))
-				.andExpect(status().isOk())
-				.andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
-				.andExpect(header().string(HttpHeaders.PRAGMA, containsString("no-cache")))
-				.andExpect(jsonPath("$.access_token").isNotEmpty())
-				.andExpect(jsonPath("$.token_type").isNotEmpty())
-				.andExpect(jsonPath("$.expires_in").isNotEmpty())
-				.andExpect(jsonPath("$.refresh_token").isNotEmpty())
-				.andExpect(jsonPath("$.scope").isNotEmpty());
-
-		verify(registeredClientRepository).findByClientId(eq(registeredClient.getClientId()));
-		verify(authorizationService).findByToken(
-				eq(authorization.getTokens().getToken(OAuth2AuthorizationCode.class).getTokenValue()),
-				eq(TokenType.AUTHORIZATION_CODE));
-		verify(authorizationService).save(any());
-	}
-
-	@Test
-	public void requestWhenPublicClientWithPkceThenReturnAccessTokenResponse() throws Exception {
-		this.spring.register(AuthorizationServerConfiguration.class).autowire();
-
-		RegisteredClient registeredClient = TestRegisteredClients.registeredPublicClient().build();
-		when(registeredClientRepository.findByClientId(eq(registeredClient.getClientId())))
-				.thenReturn(registeredClient);
-
-		MvcResult mvcResult = this.mvc.perform(get(OAuth2AuthorizationEndpointFilter.DEFAULT_AUTHORIZATION_ENDPOINT_URI)
-				.params(getAuthorizationRequestParameters(registeredClient))
-				.param(PkceParameterNames.CODE_CHALLENGE, S256_CODE_CHALLENGE)
-				.param(PkceParameterNames.CODE_CHALLENGE_METHOD, "S256")
 				.with(user("user")))
 				.andExpect(status().is3xxRedirection())
 				.andReturn();
@@ -217,42 +162,23 @@ public class OAuth2AuthorizationCodeGrantTests {
 
 		this.mvc.perform(post(OAuth2TokenEndpointFilter.DEFAULT_TOKEN_ENDPOINT_URI)
 				.params(getTokenRequestParameters(registeredClient, authorization))
-				.param(OAuth2ParameterNames.CLIENT_ID, registeredClient.getClientId())
-				.param(PkceParameterNames.CODE_VERIFIER, S256_CODE_VERIFIER))
+				.header(HttpHeaders.AUTHORIZATION, "Basic " + encodeBasicAuth(
+						registeredClient.getClientId(), registeredClient.getClientSecret())))
 				.andExpect(status().isOk())
+				.andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+				.andExpect(header().string(HttpHeaders.PRAGMA, containsString("no-cache")))
 				.andExpect(jsonPath("$.access_token").isNotEmpty())
 				.andExpect(jsonPath("$.token_type").isNotEmpty())
 				.andExpect(jsonPath("$.expires_in").isNotEmpty())
-				.andExpect(jsonPath("$.refresh_token").doesNotExist())
-				.andExpect(jsonPath("$.scope").isNotEmpty());
+				.andExpect(jsonPath("$.refresh_token").isNotEmpty())
+				.andExpect(jsonPath("$.scope").isNotEmpty())
+				.andExpect(jsonPath("$.id_token").isNotEmpty());
 
 		verify(registeredClientRepository, times(2)).findByClientId(eq(registeredClient.getClientId()));
-		verify(authorizationService, times(2)).findByToken(
+		verify(authorizationService).findByToken(
 				eq(authorization.getTokens().getToken(OAuth2AuthorizationCode.class).getTokenValue()),
 				eq(TokenType.AUTHORIZATION_CODE));
 		verify(authorizationService, times(2)).save(any());
-	}
-
-	@Test
-	public void requestWhenCustomJwtEncoderThenUsed() throws Exception {
-		this.spring.register(AuthorizationServerConfigurationWithJwtEncoder.class).autowire();
-
-		RegisteredClient registeredClient = TestRegisteredClients.registeredClient().build();
-		when(registeredClientRepository.findByClientId(eq(registeredClient.getClientId())))
-				.thenReturn(registeredClient);
-
-		OAuth2Authorization authorization = TestOAuth2Authorizations.authorization(registeredClient).build();
-		when(authorizationService.findByToken(
-				eq(authorization.getTokens().getToken(OAuth2AuthorizationCode.class).getTokenValue()),
-				eq(TokenType.AUTHORIZATION_CODE)))
-				.thenReturn(authorization);
-
-		this.mvc.perform(post(OAuth2TokenEndpointFilter.DEFAULT_TOKEN_ENDPOINT_URI)
-				.params(getTokenRequestParameters(registeredClient, authorization))
-				.header(HttpHeaders.AUTHORIZATION, "Basic " + encodeBasicAuth(
-						registeredClient.getClientId(), registeredClient.getClientSecret())));
-
-		verify(jwtCustomizer).accept(any(JoseHeader.Builder.class), any(JwtClaimsSet.Builder.class));
 	}
 
 	private static MultiValueMap<String, String> getAuthorizationRequestParameters(RegisteredClient registeredClient) {
@@ -305,11 +231,31 @@ public class OAuth2AuthorizationCodeGrantTests {
 
 	@EnableWebSecurity
 	@Import(OAuth2AuthorizationServerConfiguration.class)
-	static class AuthorizationServerConfigurationWithJwtEncoder extends AuthorizationServerConfiguration {
+	static class AuthorizationServerConfigurationWithIssuer extends AuthorizationServerConfiguration {
 
 		@Bean
-		JwtEncoder jwtEncoder() {
-			return jwtEncoder;
+		ProviderSettings providerSettings() {
+			return new ProviderSettings().issuer(issuerUrl);
+		}
+	}
+
+	@EnableWebSecurity
+	@Import(OAuth2AuthorizationServerConfiguration.class)
+	static class AuthorizationServerConfigurationWithInvalidIssuerUrl extends AuthorizationServerConfiguration {
+
+		@Bean
+		ProviderSettings providerSettings() {
+			return new ProviderSettings().issuer("urn:example");
+		}
+	}
+
+	@EnableWebSecurity
+	@Import(OAuth2AuthorizationServerConfiguration.class)
+	static class AuthorizationServerConfigurationWithInvalidIssuerUri extends AuthorizationServerConfiguration {
+
+		@Bean
+		ProviderSettings providerSettings() {
+			return new ProviderSettings().issuer("https://not a valid uri");
 		}
 	}
 }

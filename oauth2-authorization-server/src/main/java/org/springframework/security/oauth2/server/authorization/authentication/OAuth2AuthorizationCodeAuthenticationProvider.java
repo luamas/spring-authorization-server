@@ -18,12 +18,16 @@ package org.springframework.security.oauth2.server.authorization.authentication;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
+import org.springframework.security.oauth2.core.oidc.OidcIdToken;
+import org.springframework.security.oauth2.core.oidc.OidcScopes;
+import org.springframework.security.oauth2.core.oidc.endpoint.OidcParameterNames;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
@@ -31,13 +35,15 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.TokenType;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
-import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2AuthorizationCode;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenMetadata;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2Tokens;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 
 import static org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthenticationProviderUtils.getAuthenticatedClientElseThrowInvalidClient;
@@ -50,30 +56,24 @@ import static org.springframework.security.oauth2.server.authorization.authentic
  * @since 0.0.1
  * @see OAuth2AuthorizationCodeAuthenticationToken
  * @see OAuth2AccessTokenAuthenticationToken
- * @see RegisteredClientRepository
  * @see OAuth2AuthorizationService
  * @see JwtEncoder
  * @see <a target="_blank" href="https://tools.ietf.org/html/rfc6749#section-4.1">Section 4.1 Authorization Code Grant</a>
  * @see <a target="_blank" href="https://tools.ietf.org/html/rfc6749#section-4.1.3">Section 4.1.3 Access Token Request</a>
  */
 public class OAuth2AuthorizationCodeAuthenticationProvider implements AuthenticationProvider {
-	private final RegisteredClientRepository registeredClientRepository;
 	private final OAuth2AuthorizationService authorizationService;
 	private final JwtEncoder jwtEncoder;
 
 	/**
 	 * Constructs an {@code OAuth2AuthorizationCodeAuthenticationProvider} using the provided parameters.
 	 *
-	 * @param registeredClientRepository the repository of registered clients
 	 * @param authorizationService the authorization service
 	 * @param jwtEncoder the jwt encoder
 	 */
-	public OAuth2AuthorizationCodeAuthenticationProvider(RegisteredClientRepository registeredClientRepository,
-			OAuth2AuthorizationService authorizationService, JwtEncoder jwtEncoder) {
-		Assert.notNull(registeredClientRepository, "registeredClientRepository cannot be null");
+	public OAuth2AuthorizationCodeAuthenticationProvider(OAuth2AuthorizationService authorizationService, JwtEncoder jwtEncoder) {
 		Assert.notNull(authorizationService, "authorizationService cannot be null");
 		Assert.notNull(jwtEncoder, "jwtEncoder cannot be null");
-		this.registeredClientRepository = registeredClientRepository;
 		this.authorizationService = authorizationService;
 		this.jwtEncoder = jwtEncoder;
 	}
@@ -117,8 +117,9 @@ public class OAuth2AuthorizationCodeAuthenticationProvider implements Authentica
 		}
 
 		Set<String> authorizedScopes = authorization.getAttribute(OAuth2AuthorizationAttributeNames.AUTHORIZED_SCOPES);
-		Jwt jwt = OAuth2TokenIssuerUtil
-			.issueJwtAccessToken(this.jwtEncoder, authorization.getPrincipalName(), registeredClient.getClientId(), authorizedScopes);
+		Jwt jwt = OAuth2TokenIssuerUtil.issueJwtAccessToken(
+				this.jwtEncoder, authorization.getPrincipalName(), registeredClient.getClientId(),
+				authorizedScopes, registeredClient.getTokenSettings().accessTokenTimeToLive());
 		OAuth2AccessToken accessToken = new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER,
 				jwt.getTokenValue(), jwt.getIssuedAt(), jwt.getExpiresAt(), authorizedScopes);
 
@@ -126,9 +127,19 @@ public class OAuth2AuthorizationCodeAuthenticationProvider implements Authentica
 				.accessToken(accessToken);
 
 		OAuth2RefreshToken refreshToken = null;
-		if (registeredClient.getTokenSettings().enableRefreshTokens()) {
+		if (registeredClient.getAuthorizationGrantTypes().contains(AuthorizationGrantType.REFRESH_TOKEN)) {
 			refreshToken = OAuth2TokenIssuerUtil.issueRefreshToken(registeredClient.getTokenSettings().refreshTokenTimeToLive());
 			tokensBuilder.refreshToken(refreshToken);
+		}
+
+		OidcIdToken idToken = null;
+		if (authorizationRequest.getScopes().contains(OidcScopes.OPENID)) {
+			Jwt jwtIdToken = OAuth2TokenIssuerUtil.issueIdToken(
+					this.jwtEncoder, authorization.getPrincipalName(), registeredClient.getClientId(),
+					(String) authorizationRequest.getAdditionalParameters().get(OidcParameterNames.NONCE));
+			idToken = new OidcIdToken(jwtIdToken.getTokenValue(), jwtIdToken.getIssuedAt(),
+					jwtIdToken.getExpiresAt(), jwtIdToken.getClaims());
+			tokensBuilder.token(idToken);
 		}
 
 		OAuth2Tokens tokens = tokensBuilder.build();
@@ -142,11 +153,19 @@ public class OAuth2AuthorizationCodeAuthenticationProvider implements Authentica
 
 		this.authorizationService.save(authorization);
 
-		return new OAuth2AccessTokenAuthenticationToken(registeredClient, clientPrincipal, accessToken, refreshToken);
+		Map<String, Object> additionalParameters = Collections.emptyMap();
+		if (idToken != null) {
+			additionalParameters = new HashMap<>();
+			additionalParameters.put(OidcParameterNames.ID_TOKEN, idToken.getTokenValue());
+		}
+
+		return new OAuth2AccessTokenAuthenticationToken(
+				registeredClient, clientPrincipal, accessToken, refreshToken, additionalParameters);
 	}
 
 	@Override
 	public boolean supports(Class<?> authentication) {
 		return OAuth2AuthorizationCodeAuthenticationToken.class.isAssignableFrom(authentication);
 	}
+
 }

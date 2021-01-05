@@ -36,7 +36,6 @@ import org.springframework.security.oauth2.core.endpoint.OAuth2AccessTokenRespon
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.oauth2.core.http.converter.OAuth2AccessTokenResponseHttpMessageConverter;
 import org.springframework.security.oauth2.core.http.converter.OAuth2ErrorHttpMessageConverter;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AccessTokenAuthenticationToken;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeAuthenticationProvider;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeAuthenticationToken;
@@ -48,6 +47,7 @@ import org.springframework.security.oauth2.server.authorization.authentication.O
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.util.Assert;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -82,7 +82,7 @@ import java.util.stream.Collectors;
  *
  * <p>
  * The default endpoint {@code URI} {@code /oauth2/token} may be overridden
- * via the constructor {@link #OAuth2TokenEndpointFilter(AuthenticationManager, OAuth2AuthorizationService, String)}.
+ * via the constructor {@link #OAuth2TokenEndpointFilter(AuthenticationManager, String)}.
  *
  * @author Joe Grandja
  * @author Madhu Bhat
@@ -92,7 +92,6 @@ import java.util.stream.Collectors;
  * @see OAuth2AuthorizationCodeAuthenticationProvider
  * @see OAuth2RefreshTokenAuthenticationProvider
  * @see OAuth2ClientCredentialsAuthenticationProvider
- * @see OAuth2AuthorizationService
  * @see <a target="_blank" href="https://tools.ietf.org/html/rfc6749#section-3.2">Section 3.2 Token Endpoint</a>
  */
 public class OAuth2TokenEndpointFilter extends OncePerRequestFilter {
@@ -102,7 +101,6 @@ public class OAuth2TokenEndpointFilter extends OncePerRequestFilter {
 	public static final String DEFAULT_TOKEN_ENDPOINT_URI = "/oauth2/token";
 
 	private final AuthenticationManager authenticationManager;
-	private final OAuth2AuthorizationService authorizationService;
 	private final RequestMatcher tokenEndpointMatcher;
 	private final Converter<HttpServletRequest, Authentication> authorizationGrantAuthenticationConverter;
 	private final HttpMessageConverter<OAuth2AccessTokenResponse> accessTokenHttpResponseConverter =
@@ -114,27 +112,21 @@ public class OAuth2TokenEndpointFilter extends OncePerRequestFilter {
 	 * Constructs an {@code OAuth2TokenEndpointFilter} using the provided parameters.
 	 *
 	 * @param authenticationManager the authentication manager
-	 * @param authorizationService the authorization service
 	 */
-	public OAuth2TokenEndpointFilter(AuthenticationManager authenticationManager,
-			OAuth2AuthorizationService authorizationService) {
-		this(authenticationManager, authorizationService, DEFAULT_TOKEN_ENDPOINT_URI);
+	public OAuth2TokenEndpointFilter(AuthenticationManager authenticationManager) {
+		this(authenticationManager, DEFAULT_TOKEN_ENDPOINT_URI);
 	}
 
 	/**
 	 * Constructs an {@code OAuth2TokenEndpointFilter} using the provided parameters.
 	 *
 	 * @param authenticationManager the authentication manager
-	 * @param authorizationService the authorization service
 	 * @param tokenEndpointUri the endpoint {@code URI} for access token requests
 	 */
-	public OAuth2TokenEndpointFilter(AuthenticationManager authenticationManager,
-			OAuth2AuthorizationService authorizationService, String tokenEndpointUri) {
+	public OAuth2TokenEndpointFilter(AuthenticationManager authenticationManager, String tokenEndpointUri) {
 		Assert.notNull(authenticationManager, "authenticationManager cannot be null");
-		Assert.notNull(authorizationService, "authorizationService cannot be null");
 		Assert.hasText(tokenEndpointUri, "tokenEndpointUri cannot be empty");
 		this.authenticationManager = authenticationManager;
-		this.authorizationService = authorizationService;
 		this.tokenEndpointMatcher = new AntPathRequestMatcher(tokenEndpointUri, HttpMethod.POST.name());
 		Map<AuthorizationGrantType, Converter<HttpServletRequest, Authentication>> converters = new HashMap<>();
 		converters.put(AuthorizationGrantType.AUTHORIZATION_CODE, new AuthorizationCodeAuthenticationConverter());
@@ -166,7 +158,7 @@ public class OAuth2TokenEndpointFilter extends OncePerRequestFilter {
 
 			OAuth2AccessTokenAuthenticationToken accessTokenAuthentication =
 					(OAuth2AccessTokenAuthenticationToken) this.authenticationManager.authenticate(authorizationGrantAuthentication);
-			sendAccessTokenResponse(response, accessTokenAuthentication.getAccessToken(), accessTokenAuthentication.getRefreshToken());
+			sendAccessTokenResponse(response, accessTokenAuthentication);
 
 		} catch (OAuth2AuthenticationException ex) {
 			SecurityContextHolder.clearContext();
@@ -174,8 +166,12 @@ public class OAuth2TokenEndpointFilter extends OncePerRequestFilter {
 		}
 	}
 
-	private void sendAccessTokenResponse(HttpServletResponse response, OAuth2AccessToken accessToken,
-			OAuth2RefreshToken refreshToken) throws IOException {
+	private void sendAccessTokenResponse(HttpServletResponse response,
+			OAuth2AccessTokenAuthenticationToken accessTokenAuthentication) throws IOException {
+
+		OAuth2AccessToken accessToken = accessTokenAuthentication.getAccessToken();
+		OAuth2RefreshToken refreshToken = accessTokenAuthentication.getRefreshToken();
+		Map<String, Object> additionalParameters = accessTokenAuthentication.getAdditionalParameters();
 
 		OAuth2AccessTokenResponse.Builder builder =
 				OAuth2AccessTokenResponse.withToken(accessToken.getTokenValue())
@@ -186,6 +182,9 @@ public class OAuth2TokenEndpointFilter extends OncePerRequestFilter {
 		}
 		if (refreshToken != null) {
 			builder.refreshToken(refreshToken.getTokenValue());
+		}
+		if (!CollectionUtils.isEmpty(additionalParameters)) {
+			builder.additionalParameters(additionalParameters);
 		}
 		OAuth2AccessTokenResponse accessTokenResponse = builder.build();
 		ServletServerHttpResponse httpResponse = new ServletServerHttpResponse(response);

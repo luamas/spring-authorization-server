@@ -45,9 +45,12 @@ public class AuthorizationServerConfig {
 				.clientSecret("secret")
 				.clientAuthenticationMethod(ClientAuthenticationMethod.BASIC)
 				.authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+				.authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
 				.authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
 				.authorizationGrantType(AuthorizationGrantType.PASSWORD)
+				.redirectUri("http://localhost:8080/login/oauth2/code/messaging-client-oidc")
 				.redirectUri("http://localhost:8080/authorized")
+				.scope(OidcScopes.OPENID)
 				.scope("message.read")
 				.scope("message.write")
 				.clientSettings(clientSettings -> clientSettings.requireUserConsent(true))
@@ -59,5 +62,10 @@ public class AuthorizationServerConfig {
 	@Bean
 	public CryptoKeySource keySource() {
 		return new StaticKeyGeneratingCryptoKeySource();
+	}
+
+	@Bean
+	public ProviderSettings providerSettings() {
+		return new ProviderSettings().issuer("http://auth-server:9000");
 	}
 }
